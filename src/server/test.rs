@@ -9,6 +9,7 @@ use base64;
 use bytes::Bytes;
 use chrono::offset::Utc;
 use futures::executor::block_on;
+use futures_await_test::async_test;
 use hawk::{self, Credentials, Key, RequestBuilder};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
@@ -489,30 +490,43 @@ fn invalid_batch_post() {
     assert_eq!(body, "0");
 }
 
-#[test]
-fn reject_old_ios() {
-    let app = init_app!();
-
+#[async_test]
+async fn reject_old_ios() {
+    let mut app = init_app!().await;
     let mut headers = HashMap::new();
     headers.insert(
         "User-Agent",
         "Firefox-iOS-Sync/18.0b1 (iPhone; iPhone OS 13.2.2) (Fennec (synctesting))".to_owned(),
     );
+
+    let req = create_request(
+        http::Method::GET,
+        "/1.5/42/info/collections",
+        Some(headers.clone()),
+        None,
+    )
+    .to_request();
+    let response = app
+        .call(req)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
     let req = create_request(
         http::Method::POST,
         "/1.5/42/storage/tabs?batch=sammich",
         Some(headers),
         Some(json!([
             {"id": "123", "payload": "xxx", "sortindex": 23},
-            {"id": "456", "payload": "xxxasdf", "sortindex": 23}
         ])),
     )
     .to_request();
-
-    let mut app = block_on(app);
-    let response = block_on(app.call(req)).expect("Could not get response in invalid_batch_post");
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let body = String::from_utf8(block_on(test::read_body(response)).to_vec())
-        .expect("Could not get body in invalid_batch_post");
-    assert_eq!(body, "0");
+    let response = app
+        .call(req)
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = String::from_utf8(test::read_body(response).await.to_vec())
+        .unwrap();
+    assert_eq!(body, "XXX");
 }
