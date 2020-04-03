@@ -78,6 +78,15 @@ fn get_test_state(settings: &Settings) -> ServerState {
     }
 }
 
+macro_rules! init_app {
+    () => {{
+        crate::logging::init_logging(false).unwrap();
+        let settings = get_test_settings();
+        let limits = Arc::new(settings.limits.clone());
+        test::init_service(build_app!(get_test_state(&settings), limits))
+    }};
+}
+
 fn create_request(
     method: http::Method,
     path: &str,
@@ -166,9 +175,7 @@ fn test_endpoint(
     status: Option<StatusCode>,
     expected_body: Option<&str>,
 ) {
-    let settings = get_test_settings();
-    let limits = Arc::new(settings.limits.clone());
-    let app = test::init_service(build_app!(get_test_state(&settings), limits));
+    let app = init_app!();
 
     let req = create_request(method, path, None, None).to_request();
     let mut app = block_on(app);
@@ -414,12 +421,7 @@ fn bsos_can_have_a_collection_field() {
 #[test]
 fn invalid_content_type() {
     let path = "/1.5/42/storage/bookmarks/wibble";
-    let settings = get_test_settings();
-    let limits = Arc::new(settings.limits.clone());
-    let mut app = block_on(test::init_service(build_app!(
-        get_test_state(&settings),
-        limits
-    )));
+    let mut app = block_on(init_app!());
 
     let mut headers = HashMap::new();
     headers.insert("Content-Type", "application/javascript".to_owned());
@@ -464,12 +466,38 @@ fn invalid_content_type() {
 
 #[test]
 fn invalid_batch_post() {
-    let settings = get_test_settings();
-    let limits = Arc::new(settings.limits.clone());
-    let app = test::init_service(build_app!(get_test_state(&settings), limits));
+    let app = init_app!();
 
     let mut headers = HashMap::new();
     headers.insert("accept", "application/json".to_owned());
+    let req = create_request(
+        http::Method::POST,
+        "/1.5/42/storage/tabs?batch=sammich",
+        Some(headers),
+        Some(json!([
+            {"id": "123", "payload": "xxx", "sortindex": 23},
+            {"id": "456", "payload": "xxxasdf", "sortindex": 23}
+        ])),
+    )
+    .to_request();
+
+    let mut app = block_on(app);
+    let response = block_on(app.call(req)).expect("Could not get response in invalid_batch_post");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = String::from_utf8(block_on(test::read_body(response)).to_vec())
+        .expect("Could not get body in invalid_batch_post");
+    assert_eq!(body, "0");
+}
+
+#[test]
+fn reject_old_ios() {
+    let app = init_app!();
+
+    let mut headers = HashMap::new();
+    headers.insert(
+        "User-Agent",
+        "Firefox-iOS-Sync/18.0b1 (iPhone; iPhone OS 13.2.2) (Fennec (synctesting))".to_owned(),
+    );
     let req = create_request(
         http::Method::POST,
         "/1.5/42/storage/tabs?batch=sammich",

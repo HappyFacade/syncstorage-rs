@@ -17,7 +17,7 @@ use actix_web::{
 use futures::future::{self, Either, FutureExt, LocalBoxFuture, TryFutureExt};
 use std::task::Poll;
 
-#[derive(Debug)]
+#[derive(Debug)] // XXX: Default
 pub struct PreConditionCheck;
 
 impl PreConditionCheck {
@@ -74,6 +74,10 @@ where
     }
 
     fn call(&mut self, sreq: ServiceRequest) -> Self::Future {
+        eprintln!("EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+        trace!("⚠️ ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
+        debug!("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+        info!("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW");
         if DOCKER_FLOW_ENDPOINTS.contains(&sreq.uri().path().to_lowercase().as_str()) {
             let mut service = Rc::clone(&self.service);
             return Box::new(service.call(sreq)).boxed_local();
