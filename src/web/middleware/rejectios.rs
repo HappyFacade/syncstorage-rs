@@ -4,10 +4,30 @@ use std::task::{Context, Poll};
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::header::USER_AGENT,
-    Error,
+    Error, HttpResponse,
 };
-use futures::future::{ok, Ready};
+use futures::future::{self, Ready};
 use futures::Future;
+use lazy_static::lazy_static;
+use regex::Regex;
+
+lazy_static! {
+    // e.g. "Firefox-iOS-Sync/18.0b1 (iPhone; iPhone OS 13.2.2) (Fennec (synctesting))"
+    static ref IOS_REGEX: Regex = Regex::new(
+        r"(?x)
+^
+Firefox-iOS-Sync/
+(?P<major>[0-9]+)\.[.0-9]+    # <appVersion-major>.<appVersion-minor-etc>
+b([0-9]+)                     # b<builderNumber>
+\s\([[:word:]]+               #  (<deviceModel>
+;\siPhone\sOS                 # ; iPhone OS
+\s[.0-9]+\)                   #  <systemVersion>)
+\s\(.*\)                      #  (<displayName>)
+$
+"
+    )
+    .unwrap();
+}
 
 #[derive(Debug, Default)]
 pub struct RejectOldIos;
@@ -32,7 +52,7 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(RejectOldIosMiddleware { service })
+        future::ok(RejectOldIosMiddleware { service })
     }
 }
 
@@ -58,20 +78,20 @@ where
     fn call(&mut self, sreq: ServiceRequest) -> Self::Future {
         if let Some(header) = sreq.headers().get(USER_AGENT) {
             if let Ok(ua) = header.to_str() {
-                use actix_web::HttpResponse;
-                use futures::future;
-                eprintln!("Hi from start. You: {:#?} requested: {}", ua, sreq.path());
-                return Box::pin(future::ok(
-                    sreq.into_response(
-                        HttpResponse::InternalServerError()
+                if should_reject(ua) {
+                    return Box::pin(future::ok(
+                        sreq.into_response(
+                            HttpResponse::InternalServerError()
                             //                            .content_type("application/json")
-                            .body("XXX".to_owned())
-                            .into_body(),
-                    ),
-                ));
+                                .body("XXX".to_owned())
+                                .into_body(),
+                        ),
+                    ));
+                }
             }
         }
-
+        self.service.call(sreq)
+/*
         let fut = self.service.call(sreq);
 
         Box::pin(async move {
@@ -80,5 +100,16 @@ where
             eprintln!("Hi from response");
             Ok(res)
         })
+*/
     }
+}
+
+fn should_reject(ua: &str) -> bool {
+    if let Some(captures) = IOS_REGEX.captures(ua) {
+        if let Some(major) = captures.name("major") {
+            let major = major.as_str().parse::<u32>().unwrap_or(20);
+            return major < 20;
+        }
+    }
+    false
 }

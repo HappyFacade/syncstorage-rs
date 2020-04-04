@@ -491,6 +491,26 @@ fn invalid_batch_post() {
 }
 
 #[async_test]
+async fn accept_new_ios() {
+    let mut app = init_app!().await;
+    let mut headers = HashMap::new();
+    headers.insert(
+        "User-Agent",
+        "Firefox-iOS-Sync/23.0b17297 (iPhone; iPhone OS 12.4) (Firefox)".to_owned(),
+    );
+
+    let req = create_request(
+        http::Method::GET,
+        "/1.5/42/info/collections",
+        Some(headers),
+        None,
+    )
+    .to_request();
+    let response = app.call(req).await.unwrap();
+    assert!(response.status().is_success());
+}
+
+#[async_test]
 async fn reject_old_ios() {
     let mut app = init_app!().await;
     let mut headers = HashMap::new();
@@ -506,10 +526,7 @@ async fn reject_old_ios() {
         None,
     )
     .to_request();
-    let response = app
-        .call(req)
-        .await
-        .unwrap();
+    let response = app.call(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
     let req = create_request(
@@ -521,12 +538,8 @@ async fn reject_old_ios() {
         ])),
     )
     .to_request();
-    let response = app
-        .call(req)
-        .await
-        .unwrap();
+    let response = app.call(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let body = String::from_utf8(test::read_body(response).await.to_vec())
-        .unwrap();
+    let body = String::from_utf8(test::read_body(response).await.to_vec()).unwrap();
     assert_eq!(body, "XXX");
 }
