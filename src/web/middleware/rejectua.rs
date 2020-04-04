@@ -1,4 +1,3 @@
-use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use actix_web::{
@@ -6,13 +5,13 @@ use actix_web::{
     http::header::USER_AGENT,
     Error, HttpResponse,
 };
-use futures::future::{self, Ready};
-use futures::Future;
+use futures::future::{self, LocalBoxFuture, Ready};
 use lazy_static::lazy_static;
 use regex::Regex;
 
 lazy_static! {
     // e.g. "Firefox-iOS-Sync/18.0b1 (iPhone; iPhone OS 13.2.2) (Fennec (synctesting))"
+    // https://github.com/mozilla-mobile/firefox-ios/blob/v19.x/Shared/UserAgent.swift#L12
     static ref IOS_REGEX: Regex = Regex::new(
         r"(?x)
 ^
@@ -30,15 +29,15 @@ $
 }
 
 #[derive(Debug, Default)]
-pub struct RejectOldIos;
+pub struct RejectUA;
 
-impl RejectOldIos {
+impl RejectUA {
     pub fn new() -> Self {
-        RejectOldIos::default()
+        RejectUA::default()
     }
 }
 
-impl<S, B> Transform<S> for RejectOldIos
+impl<S, B> Transform<S> for RejectUA
 where
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
     S::Future: 'static,
@@ -48,19 +47,19 @@ where
     type Response = ServiceResponse<B>;
     type Error = Error;
     type InitError = ();
-    type Transform = RejectOldIosMiddleware<S>;
+    type Transform = RejectUAMiddleware<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        future::ok(RejectOldIosMiddleware { service })
+        future::ok(RejectUAMiddleware { service })
     }
 }
 
-pub struct RejectOldIosMiddleware<S> {
+pub struct RejectUAMiddleware<S> {
     service: S,
 }
 
-impl<S, B> Service for RejectOldIosMiddleware<S>
+impl<S, B> Service for RejectUAMiddleware<S>
 where
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
     S::Future: 'static,
@@ -69,7 +68,7 @@ where
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
@@ -82,7 +81,7 @@ where
                     return Box::pin(future::ok(
                         sreq.into_response(
                             HttpResponse::InternalServerError()
-                            //                            .content_type("application/json")
+                                //                            .content_type("application/json")
                                 .body("XXX".to_owned())
                                 .into_body(),
                         ),
@@ -90,20 +89,16 @@ where
                 }
             }
         }
-        self.service.call(sreq)
-/*
-        let fut = self.service.call(sreq);
-
-        Box::pin(async move {
-            let res = fut.await?;
-
-            eprintln!("Hi from response");
-            Ok(res)
-        })
-*/
+        Box::pin(self.service.call(sreq))
     }
 }
 
+/// Determine if a User-Agent should be rejected w/ an error response.
+///
+/// Older iOS clients have a bug where they'll crash on our response
+/// headers. They're rejected w/ an error response to avoid trigger
+/// the crash.
+/// https://github.com/mozilla-services/syncstorage-rs/issues/293
 fn should_reject(ua: &str) -> bool {
     if let Some(captures) = IOS_REGEX.captures(ua) {
         if let Some(major) = captures.name("major") {

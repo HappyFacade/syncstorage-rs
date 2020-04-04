@@ -66,8 +66,7 @@ macro_rules! build_app {
             .wrap(middleware::db::DbTransaction::new())
             .wrap(middleware::weave::WeaveTimestamp::new())
             .wrap(middleware::sentry::SentryWrapper::new())
-            // rejectua?
-            .wrap(middleware::rejectios::RejectOldIos::new())
+            .wrap(middleware::rejectua::RejectUA::new())
             // Followed by the "official middleware" so they run first.
             .wrap(Cors::default())
             .service(
